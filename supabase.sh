@@ -9,6 +9,8 @@ flag=$1
 ##########################################################################
 # Global Variables
 ##########################################################################
+SCRIPT_DIR=$( cd -- "$( dirname -- "${BASH_SOURCE[0]}" )" &> /dev/null && pwd )
+
 RED="\u001b[31;1m"
 GREEN="\033[0;32m"
 NC="\033[0m"
@@ -42,7 +44,6 @@ echo -e ".....................${GREEN},${NC}...................";
 
 echo -e "";
 echo -e "${GREEN}Lets get started, We just need a few details from you${NC} ";
-echo -e "";
 
 ##########################################################################
 # Postgres Database Password
@@ -171,7 +172,7 @@ fi
 ##########################################################################
 # Default Variables: GO TRUE
 ##########################################################################
-SITE_URL=http://localhost:3000
+SITE_URL="http://localhost:3000"
 ADDITIONAL_REDIRECT_URLS=
 JWT_EXPIRY=3600
 DISABLE_SIGNUP=false
@@ -189,8 +190,8 @@ POSTGRES_PORT=5432
 ##########################################################################
 # Default Variables: Postgres Defaults
 ##########################################################################
-POSTGRES_USER=postgres
-POSTGRES_DB=supabase
+POSTGRES_USER="postgres"
+POSTGRES_DB="supabase"
 
 ##########################################################################
 # GENERATE ANON & SERVICE ROLE JWT KEYS
@@ -228,12 +229,50 @@ service_role_signature=$(echo "${service_role_header_payload}" | hmacsha256_sign
 ANON_KEY="${anon_header_payload}.${anon_signature}"
 SERVICE_ROLE_KEY="${service_role_header_payload}.${service_role_signature}"
 
+##########################################################################
+# File Setup
+##########################################################################
+if [[ $flag == '--reset' ]]
+then
+    rm -rf "${SCRIPT_DIR}/volumes" >> /dev/null
+fi
+
+if [[ ! -d "${SCRIPT_DIR}/volumes" && ! -d "${SCRIPT_DIR}/volumes/db" && ! -d "${SCRIPT_DIR}/volumes/api" ]]
+then
+    mkdir -p "${SCRIPT_DIR}/volumes" >> /dev/null
+    mkdir -p "${SCRIPT_DIR}/volumes/db" >> /dev/null
+    mkdir -p "${SCRIPT_DIR}/volumes/db/init" >> /dev/null
+    wget -q -P "${SCRIPT_DIR}/volumes/db/init" "https://raw.githubusercontent.com/christopher-talke/docker-cli-supabase/main/volumes/db/init/00-initial-schema.sql"
+    wget -q -P "${SCRIPT_DIR}/volumes/db/init" "https://raw.githubusercontent.com/christopher-talke/docker-cli-supabase/main/volumes/db/init/01-auth-schema.sql"
+    wget -q -P "${SCRIPT_DIR}/volumes/db/init" "https://raw.githubusercontent.com/christopher-talke/docker-cli-supabase/main/volumes/db/init/02-storage-schema.sql"
+    wget -q -P "${SCRIPT_DIR}/volumes/db/init" "https://raw.githubusercontent.com/christopher-talke/docker-cli-supabase/main/volumes/db/init/03-post-setup.sql"
+    mkdir -p "${SCRIPT_DIR}/volumes/api" >> /dev/null
+    wget -q -P "${SCRIPT_DIR}/volumes/api" "https://raw.githubusercontent.com/christopher-talke/docker-cli-supabase/main/volumes/api/kong.yml"
+fi
+
+sed -i "s/anon-role-replace/${ANON_KEY}/" "${SCRIPT_DIR}/volumes/api/kong.yml" >> /dev/null
+sed -i "s/service-role-replace/${SERVICE_ROLE_KEY}/" "${SCRIPT_DIR}/volumes/api/kong.yml" >> /dev/null
+
 ####################################################################################################################################################
 # Start Of Docker Processing
 ####################################################################################################################################################
 
+echo ""
 if [[ $flag == '--reset' ]]
 then
+    echo ">>> Starting cleanup process"
+    echo ">>>>>> Removing docker containers from supabase-network..."
+    docker network disconnect $NETWORK_NAME supabase-meta &> /dev/null
+    docker network disconnect $NETWORK_NAME supabase-storage &> /dev/null
+    docker network disconnect $NETWORK_NAME supabase-rest &> /dev/null
+    docker network disconnect $NETWORK_NAME supabase-auth &> /dev/null
+    docker network disconnect $NETWORK_NAME supabase-studio &> /dev/null
+    docker network disconnect $NETWORK_NAME supabase-db &> /dev/null
+
+    echo ">>>>>> Removing supabase-network..."
+    docker network rm $NETWORK_NAME &> /dev/null
+
+    echo ">>>>>> Cleaning up existing docker containers..."
     docker rm -f supabase-meta &> /dev/null &&
     docker rm -f supabase-storage &> /dev/null &&
     docker rm -f supabase-rest &> /dev/null &&
@@ -242,12 +281,7 @@ then
     docker rm -f supabase-realtime &> /dev/null &&
     docker rm -f supabase-db &> /dev/null
 
-    docker network disconnect $NETWORK_NAME supabase-meta &> /dev/null
-    docker network disconnect $NETWORK_NAME supabase-storage &> /dev/null
-    docker network disconnect $NETWORK_NAME supabase-rest &> /dev/null
-    docker network disconnect $NETWORK_NAME supabase-auth &> /dev/null
-    docker network disconnect $NETWORK_NAME supabase-studio &> /dev/null
-    docker network disconnect $NETWORK_NAME supabase-db &> /dev/null
+    echo ""
 fi 
 
 # Docker Network
@@ -256,7 +290,8 @@ NETWORK_NAME="supabase-network"
 echo ">>> Creating Network '$NETWORK_NAME'..."
     docker network rm $NETWORK_NAME &> /dev/null
     docker network create $NETWORK_NAME &> /dev/null
-echo "    - Network Created!"
+echo ">>>>>> Network Created!"
+echo ""
 
 # Database Service
 DB_CONTAINER_NAME="supabase-db"
@@ -271,24 +306,25 @@ docker run -d \
     -e POSTGRES_PASSWORD=$POSTGRES_PASSWORD \
     -e POSTGRES_USER=$POSTGRES_USER \
     -e POSTGRES_DB=$POSTGRES_DB \
-    -v ~/DEPLOY/supabase/volumes/db/data:/var/lib/postgresql/data \
-    -v ~/DEPLOY/supabase/volumes/db/init:/docker-entrypoint-initdb.d \
+    -v $SCRIPT_DIR/volumes/db/data:/var/lib/postgresql/data \
+    -v $SCRIPT_DIR/volumes/db/init:/docker-entrypoint-initdb.d \
     -p 5432:5432 \
     --restart unless-stopped \
     --network $NETWORK_NAME \
     supabase/postgres:latest &> /dev/null
 
-echo "    - Waiting for database to finish setting itself up..."
+echo ">>>>>> Waiting for database to finish setting itself up..."
 sleep 120
-echo "    - Excuting some commands against the database... gimme a sec..."
+echo ">>>>>> Excuting some commands against the database... gimme a sec..."
 sleep 30
 docker exec -u root $DB_CONTAINER_NAME bash -c 'su postgres -c postgres -c config_file=/etc/postgresql/postgresql.conf'
-echo "    - Finished setting up database!"
+echo ">>>>>> Finished setting up database!"
 
 
 # Studio Service
 STUDIO_CONTAINER_NAME="supabase-studio"
 
+echo ""
 echo ">>> Creating Web UI for Supabase '$STUDIO_CONTAINER_NAME'..."
 docker stop $STUDIO_CONTAINER_NAME &> /dev/null
 docker kill $STUDIO_CONTAINER_NAME &> /dev/null
@@ -304,7 +340,7 @@ docker run -d \
     --restart unless-stopped \
     --network $NETWORK_NAME \
     supabase/studio:latest &> /dev/null
-echo "    - Finished setting up Web UI!"
+echo ">>>>>> Finished setting up Web UI!"
 
 # Kong Service
 KONG_CONTAINER_NAME="supabase-kong"
@@ -313,20 +349,22 @@ docker stop $KONG_CONTAINER_NAME &> /dev/null
 docker kill $KONG_CONTAINER_NAME &> /dev/null
 docker rm $KONG_CONTAINER_NAME &> /dev/null
 
+echo ""
+echo ">>> Creating API Gateway '$KONG_CONTAINER_NAME'..."
 docker run -d \
     --name=$KONG_CONTAINER_NAME \
     -e KONG_DATABASE="off" \
     -e KONG_DECLARATIVE_CONFIG="/var/lib/kong/kong.yml" \
     -e KONG_DNS_ORDER="LAST,A,CNAME" \
     -e KONG_PLUGINS="request-transformer,cors,key-auth,acl" \
-    -v ~/DEPLOY/supabase/volumes/api/kong.yml:/var/lib/kong/kong.yml \
+    -v $SCRIPT_DIR/volumes/api/kong.yml:/var/lib/kong/kong.yml \
     -p 8000:8000 \
     -p 8443:8443 \
     --restart unless-stopped \
     --network $NETWORK_NAME \
     kong:latest &> /dev/null
+echo ">>>>>> Finished setting up API Gateway!"
 
-sleep 60
 # Auth Service
 AUTH_CONTAINER_NAME="supabase-auth"
 
@@ -334,6 +372,8 @@ docker stop $AUTH_CONTAINER_NAME &> /dev/null
 docker kill $AUTH_CONTAINER_NAME &> /dev/null
 docker rm $AUTH_CONTAINER_NAME &> /dev/null
 
+echo ""
+echo ">>> Creating Authentication Service '$AUTH_CONTAINER_NAME'..."
 docker run -d \
     --name=$AUTH_CONTAINER_NAME \
     -e GOTRUE_API_HOST=0.0.0.0 \
@@ -363,6 +403,8 @@ docker run -d \
     --restart unless-stopped \
     --network $NETWORK_NAME \
     supabase/gotrue:latest &> /dev/null
+echo ">>>>>> Finished setting up Authentication Service!"
+
 
 # Auth Service
 REST_CONTAINER_NAME="supabase-rest"
@@ -371,6 +413,8 @@ docker stop $REST_CONTAINER_NAME &> /dev/null
 docker kill $REST_CONTAINER_NAME &> /dev/null
 docker rm $REST_CONTAINER_NAME &> /dev/null
 
+echo ""
+echo ">>> Creating REST API '$REST_CONTAINER_NAME'..."
 docker run -d \
     --name=$REST_CONTAINER_NAME \
     -e PGRST_DB_URI="postgres://$POSTGRES_USER:$POSTGRES_PASSWORD@supabase-db:5432/$POSTGRES_DB" \
@@ -381,6 +425,7 @@ docker run -d \
     --restart unless-stopped \
     --network $NETWORK_NAME \
     postgrest/postgrest:latest &> /dev/null
+echo ">>>>>> Finished setting up REST API!"
 
 # Realtime Service
 REALTIME_CONTAINER_NAME="supabase-realtime"
@@ -389,6 +434,8 @@ docker stop $REALTIME_CONTAINER_NAME &> /dev/null
 docker kill $REALTIME_CONTAINER_NAME &> /dev/null
 docker rm $REALTIME_CONTAINER_NAME &> /dev/null
 
+echo ""
+echo ">>> Creating Realtime Service '$REALTIME_CONTAINER_NAME'..."
 docker run -d \
     --name=$REALTIME_CONTAINER_NAME \
     -e DB_HOST="supabase-db" \
@@ -407,10 +454,11 @@ docker run -d \
     --restart unless-stopped \
     --network $NETWORK_NAME \
     supabase/realtime:latest &> /dev/null
- 
+echo ">>>>>> Finished setting up Realtime Service!"
+echo ">>>>>> Excuting some commands against the database... gimme a sec..."
 sleep 30
-
 docker exec $REALTIME_CONTAINER_NAME bash -c './prod/rel/realtime/bin/realtime eval Realtime.Release.migrate && ./prod/rel/realtime/bin/realtime start'
+echo ">>>>>> Finished setting up database!"
 
 # Storage Service
 STORAGE_CONTAINER_NAME="supabase-storage"
@@ -419,6 +467,8 @@ docker stop $STORAGE_CONTAINER_NAME &> /dev/null
 docker kill $STORAGE_CONTAINER_NAME &> /dev/null
 docker rm $STORAGE_CONTAINER_NAME &> /dev/null
 
+echo ""
+echo ">>> Creating Storage Service '$STORAGE_CONTAINER_NAME'..."
 docker run -d \
     --name=$STORAGE_CONTAINER_NAME \
     -e ANON_KEY=$ANON_KEY \
@@ -435,8 +485,9 @@ docker run -d \
     -e GLOBAL_S3_BUCKET="stub" \
     --restart unless-stopped \
     --network $NETWORK_NAME \
-    -v ~/DEPLOY/supabase/volumes/storage:/var/lib/storage \
+    -v $SCRIPT_DIR/volumes/storage:/var/lib/storage \
     supabase/storage-api:latest &> /dev/null
+echo ">>>>>> Finished setting up Storage Service!"
 
 # Meta Service
 META_CONTAINER_NAME="supabase-meta"
@@ -445,6 +496,8 @@ docker stop $META_CONTAINER_NAME &> /dev/null
 docker kill $META_CONTAINER_NAME &> /dev/null
 docker rm $META_CONTAINER_NAME &> /dev/null
 
+echo ""
+echo ">>> Creating Meta Service '$META_CONTAINER_NAME'..."
 docker run -d \
     --name=$META_CONTAINER_NAME \
     -e PG_META_PORT=8080 \
@@ -452,8 +505,9 @@ docker run -d \
     -e PG_META_DB_PASSWORD=$POSTGRES_PASSWORD \
     --restart unless-stopped \
     --network $NETWORK_NAME \
-    -v ~/DEPLOY/supabase/volumes/storage:/var/lib/storage \
+    -v $SCRIPT_DIR/volumes/storage:/var/lib/storage \
     supabase/postgres-meta:latest &> /dev/null
+echo ">>>>>> Finished setting up Meta Service!"
 
 ####################################################################################################################################################
 # End Of Docker Processing

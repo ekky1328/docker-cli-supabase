@@ -6,10 +6,10 @@ _format_version: '1.1'
 consumers:
   - username: anon
     keyauth_credentials:
-      - key: <<anon-role-replace>>
+      - key: anon-role-replace
   - username: service_role
     keyauth_credentials:
-      - key: <<service-role-replace>>
+      - key: service-role-replace
 
 ###
 ### Access Control List
