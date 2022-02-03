@@ -242,12 +242,12 @@ then
     mkdir -p "${SCRIPT_DIR}/volumes" >> /dev/null
     mkdir -p "${SCRIPT_DIR}/volumes/db" >> /dev/null
     mkdir -p "${SCRIPT_DIR}/volumes/db/init" >> /dev/null
-    wget -q -P "${SCRIPT_DIR}/volumes/db/init" "https://raw.githubusercontent.com/christopher-talke/docker-cli-supabase/main/volumes/db/init/00-initial-schema.sql"
-    wget -q -P "${SCRIPT_DIR}/volumes/db/init" "https://raw.githubusercontent.com/christopher-talke/docker-cli-supabase/main/volumes/db/init/01-auth-schema.sql"
-    wget -q -P "${SCRIPT_DIR}/volumes/db/init" "https://raw.githubusercontent.com/christopher-talke/docker-cli-supabase/main/volumes/db/init/02-storage-schema.sql"
-    wget -q -P "${SCRIPT_DIR}/volumes/db/init" "https://raw.githubusercontent.com/christopher-talke/docker-cli-supabase/main/volumes/db/init/03-post-setup.sql"
+    wget --no-cache -q -P "${SCRIPT_DIR}/volumes/db/init" "https://raw.githubusercontent.com/christopher-talke/docker-cli-supabase/main/volumes/db/init/00-initial-schema.sql"
+    wget --no-cache -q -P "${SCRIPT_DIR}/volumes/db/init" "https://raw.githubusercontent.com/christopher-talke/docker-cli-supabase/main/volumes/db/init/01-auth-schema.sql"
+    wget --no-cache -q -P "${SCRIPT_DIR}/volumes/db/init" "https://raw.githubusercontent.com/christopher-talke/docker-cli-supabase/main/volumes/db/init/02-storage-schema.sql"
+    wget --no-cache -q -P "${SCRIPT_DIR}/volumes/db/init" "https://raw.githubusercontent.com/christopher-talke/docker-cli-supabase/main/volumes/db/init/03-post-setup.sql"
     mkdir -p "${SCRIPT_DIR}/volumes/api" >> /dev/null
-    wget -q -P "${SCRIPT_DIR}/volumes/api" "https://raw.githubusercontent.com/christopher-talke/docker-cli-supabase/main/volumes/api/kong.yml"
+    wget --no-cache -q -P "${SCRIPT_DIR}/volumes/api" "https://raw.githubusercontent.com/christopher-talke/docker-cli-supabase/main/volumes/api/kong.yml"
 fi
 
 sed -i "s/anon-role-replace/${ANON_KEY}/" "${SCRIPT_DIR}/volumes/api/kong.yml" >> /dev/null
