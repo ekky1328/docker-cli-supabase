@@ -46,9 +46,14 @@ echo -e "${GREEN}Lets get started, We just need a few details from you${NC} ";
 ##########################################################################
 # Installation Directory
 ##########################################################################
-SCRIPT_DIR=$(echo "/home/$(echo whoami)/DEPLOY/supabase")
 echo -e "";
-read -p "1. Enter an installation directory (Default: ~/DEPLOY/supabase): " SCRIPT_DIR
+read -p "$(echo -e "1. Enter an installation directory (Default: /home/%username%/DEPLOY/supabase) ${RED}[Required]${NC}: ")" SCRIPT_DIR
+if [ -z "$SCRIPT_DIR" ]
+then
+    while [[ -z "$SCRIPT_DIR" ]]; do
+        read -p "$(echo -e "   You forgot to an installation directory: ")" SCRIPT_DIR
+    done
+fi
 
 ##########################################################################
 # Postgres Database Password
@@ -162,7 +167,7 @@ fi
 ##########################################################################
 if [ -z "$POSTGRES_PASSWORD" ]
 then
-    POSTGRES_PASSWORD=`cat /dev/urandom | tr -dc "a-zA-Z0-9!@#\-$%^&_" | fold -w 64 | head -n 1`
+    POSTGRES_PASSWORD=`cat /dev/urandom | tr -dc "a-zA-Z0-9-_" | fold -w 64 | head -n 1`
 fi
 
 ##########################################################################
@@ -170,7 +175,7 @@ fi
 ##########################################################################
 if [ -z "$JWT_SECRET" ]
 then
-    JWT_SECRET=`cat /dev/urandom | tr -dc "a-zA-Z0-9!@#\-$%^&" | fold -w 64 | head -n 1`
+    JWT_SECRET=`cat /dev/urandom | tr -dc "a-zA-Z0-9-_" | fold -w 64 | head -n 1`
 fi
 
 ##########################################################################
