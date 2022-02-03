@@ -46,7 +46,7 @@ echo -e "${GREEN}Lets get started, We just need a few details from you${NC} ";
 ##########################################################################
 # Installation Directory
 ##########################################################################
-SCRIPT_DIR==$(echo "/home/$(echo whoami)/DEPLOY/supabase")
+SCRIPT_DIR=$(echo "/home/$(echo whoami)/DEPLOY/supabase")
 echo -e "";
 read -p "1. Enter an installation directory (Default: ~/DEPLOY/supabase): " SCRIPT_DIR
 
