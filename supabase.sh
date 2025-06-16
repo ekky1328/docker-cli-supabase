@@ -1,224 +1,223 @@
 #!/usr/bin/env bash
 
 ##########################################################################
-# Control Flags
+# Control Flags and Initialization
 ##########################################################################
-
+set -e  # Exit on error
 flag=$1
+log_file="supabase_setup.log"
 
 ##########################################################################
-# Global Variables
+# Global Variables and Colors
 ##########################################################################
-RED="\u001b[31;1m"
+RED="\033[0;31m"
 GREEN="\033[0;32m"
-NC="\033[0m"
+YELLOW="\033[0;33m"
+BLUE="\033[0;34m"
+BOLD="\033[1m"
+NC="\033[0m"  # No Color
 
-if [ -x "$(command -v docker)" ]; then
-
-##########################################################################
-# Fancy logo Stuff
-##########################################################################
-echo -e "....................${GREEN}.${NC}....................";
-echo -e "..................${GREEN},ol${NC}....................";
-echo -e ".................${GREEN}:dxl${NC}....................";
-echo -e "...............${GREEN},lxxxl${NC}....................";
-echo -e "..............${GREEN}:dxxxxl${NC}....................";
-echo -e ".............${GREEN}lxxxxxxo${NC}....................";
-echo -e "...........${GREEN}:dxxxxxxxl${NC}....${GREEN}SUPABASE${NC}........";
-echo -e "..........${GREEN}lxxxxxxxxxl${NC}....................";
-echo -e "........${GREEN};oxxxxxxxxxxo${NC}....................";
-echo -e ".......${GREEN}ldxxxxxxxxxxxdc:ccclllooodddxxl${NC}...";
-echo -e ".....${GREEN};oxxxxxxxxxxxxxdc:cclllooodddddc${NC}....";
-echo -e "....${GREEN}cdxxxxxxxxxxxxxxdlccllloooodddo;${NC}.....";
-echo -e "...${GREEN}llllllllllllllllccclllooooddddc${NC}.......";
-echo -e ".....................${GREEN}:lllloooddo;${NC}........";
-echo -e ".....................${GREEN}:llloooodc${NC}..........";
-echo -e ".....................${GREEN}:llooooo;${NC}...........";
-echo -e ".....................${GREEN}:lloooc${NC}.............";
-echo -e ".....................${GREEN}:oool;${NC}..............";
-echo -e ".....................${GREEN}:ooc${NC}................";
-echo -e ".....................${GREEN}cl;${NC}.................";
-echo -e ".....................${GREEN},${NC}...................";
-
-echo -e "";
-echo -e "${GREEN}Lets get started, We just need a few details from you${NC} ";
+# Default values
+DEFAULT_INSTALL_DIR="$HOME/DEPLOY/supabase"
+COMPOSE_FILE="docker-compose.yml"
+DEFAULT_STUDIO_PORT=3000
+DEFAULT_KONG_HTTP_PORT=8000
+DEFAULT_KONG_HTTPS_PORT=8443
+DEFAULT_POSTGRES_PORT=5432
+NETWORK_NAME="supabase-network"
+ORIGIN_REPO="https://raw.githubusercontent.com/ekky1328"
 
 ##########################################################################
-# Installation Directory
+# Helper Functions
 ##########################################################################
-echo -e "";
-read -p "$(echo -e "1. Enter an installation directory (Default: /home/%username%/DEPLOY/supabase) ${RED}[Required]${NC}: ")" SCRIPT_DIR
-if [ -z "$SCRIPT_DIR" ]
-then
-    while [[ -z "$SCRIPT_DIR" ]]; do
-        read -p "$(echo -e "   You forgot to an installation directory: ")" SCRIPT_DIR
-    done
+log() {
+    echo -e "${2:-$NC}$1${NC}"
+    echo "$(date '+%Y-%m-%d %H:%M:%S') - $1" >> "$log_file"
+}
+
+error() {
+    log "$1" $RED >&2
+    exit 1
+}
+
+check_dependencies() {
+    log "Checking for dependencies..." $BLUE
+    
+    MISSING_DEPS=0;
+
+    if ! command -v docker &> /dev/null; then
+        error "Docker not installed. Please install Docker: https://docs.docker.com/engine/install/"
+        MISSING_DEPS=1;
+    fi
+    
+    if docker ps 2>&1 | grep -q "error during connect"; then
+        error "Docker is not running. Please start docker deamon and try again."
+        MISSING_DEPS=1;
+    fi
+
+    if ! command -v curl &> /dev/null; then
+        error "curl not installed. Please install curl to continue."
+        MISSING_DEPS=1;
+    fi
+    
+    if [ $MISSING_DEPS -eq 1 ]; then
+        exit 1;
+    fi
+
+    log "All dependencies satisfied." $GREEN
+}
+
+generate_random_string() {
+    cat /dev/urandom | tr -dc "a-zA-Z0-9-_" | fold -w 64 | head -n 1
+}
+
+display_logo() {
+    echo -e "....................${GREEN}.${NC}....................";
+    echo -e "..................${GREEN},ol${NC}....................";
+    echo -e ".................${GREEN}:dxl${NC}....................";
+    echo -e "...............${GREEN},lxxxl${NC}....................";
+    echo -e "..............${GREEN}:dxxxxl${NC}....................";
+    echo -e ".............${GREEN}lxxxxxxo${NC}....................";
+    echo -e "...........${GREEN}:dxxxxxxxl${NC}....${GREEN}SUPABASE${NC}........";
+    echo -e "..........${GREEN}lxxxxxxxxxl${NC}....................";
+    echo -e "........${GREEN};oxxxxxxxxxxo${NC}....................";
+    echo -e ".......${GREEN}ldxxxxxxxxxxxdc:ccclllooodddxxl${NC}...";
+    echo -e ".....${GREEN};oxxxxxxxxxxxxxdc:cclllooodddddc${NC}....";
+    echo -e "....${GREEN}cdxxxxxxxxxxxxxxdlccllloooodddo;${NC}.....";
+    echo -e "...${GREEN}llllllllllllllllccclllooooddddc${NC}.......";
+    echo -e ".....................${GREEN}:lllloooddo;${NC}........";
+    echo -e ".....................${GREEN}:llloooodc${NC}..........";
+    echo -e ".....................${GREEN}:llooooo;${NC}...........";
+    echo -e ".....................${GREEN}:lloooc${NC}.............";
+    echo -e ".....................${GREEN}:oool;${NC}..............";
+    echo -e ".....................${GREEN}:ooc${NC}................";
+    echo -e ".....................${GREEN}cl;${NC}.................";
+    echo -e ".....................${GREEN},${NC}...................";
+    echo -e "";
+    log "Supabase Setup Assistant" $BOLD
+}
+
+prompt_user() {
+    local prompt_text="$1"
+    local required="$2"
+    local is_password="$3"
+    local default_value="${4:-}"
+    local input=""
+    
+    local prompt_str
+    if [[ -n "$default_value" ]]; then
+        prompt_str="$prompt_text (Default: $default_value): "
+    else
+        prompt_str="$prompt_text: "
+    fi
+    
+    if [[ "$is_password" == "true" ]]; then
+        read -sp "$prompt_str" input
+        echo ""
+    else
+        read -p "$prompt_str" input
+    fi
+    
+    if [[ -z "$input" && -n "$default_value" ]]; then
+        input="$default_value"
+    fi
+    
+    if [[ -z "$input" && "$required" == "true" ]]; then
+        while [[ -z "$input" ]]; do
+            if [[ "$is_password" == "true" ]]; then
+                read -sp "   Required field, please enter a value: " input
+                echo ""
+            else
+                read -p "   Required field, please enter a value: " input
+            fi
+        done
+    fi
+    
+    echo "$input"
+}
+
+##########################################################################
+# Main Script Execution
+##########################################################################
+# Start logging
+echo "" > "$log_file"
+log "Starting Supabase setup script - $(date)" $BLUE
+
+# Check dependencies
+check_dependencies
+
+# Display logo and welcome message
+display_logo
+
+log "Let's get started. We need a few details from you." $GREEN
+
+##########################################################################
+# Gather User Input
+##########################################################################
+SCRIPT_DIR=$(prompt_user "1. Enter an installation directory" "true" "false" "$DEFAULT_INSTALL_DIR")
+mkdir -p "$SCRIPT_DIR" || error "Failed to create installation directory"
+
+POSTGRES_PASSWORD=$(prompt_user "2. Enter a password for your Postgres Database (leave blank for auto-generate)" "false" "true")
+if [ -z "$POSTGRES_PASSWORD" ]; then
+    POSTGRES_PASSWORD=$(generate_random_string)
+    log "Generated random Postgres password" $YELLOW
 fi
 
-##########################################################################
-# Postgres Database Password
-##########################################################################
-read -sp "2. Enter a password for your Postgres Database (If left blank, it will be autogenerated): " POSTGRES_PASSWORD
-
-##########################################################################
-# JWT Secret (Will be used to sign Anon Role and Service Role keys)
-##########################################################################
-echo -e "";
-read -sp "3. Enter a JWT Secret to be used by Supabase (If left blank, it will be autogenerated): " JWT_SECRET
-
-##########################################################################
-# SUPABASE URL (STUDIO, POSTGRES, KONG ETC)
-##########################################################################
-echo -e "";
-read -p "$(echo -e "4. Enter the domain you will use to access Supabase Studio ${RED}[Required]${NC}: https://")" domain
-if [ -z "$domain" ]
-then
-    while [[ -z "$domain" ]]; do
-        read -p "$(echo -e "   You forgot to pick a domain for your Supabase instance, try again ${RED}[Required]${NC}: https://")" domain
-    done
+JWT_SECRET=$(prompt_user "3. Enter a JWT Secret (leave blank for auto-generate)" "false" "true")
+if [ -z "$JWT_SECRET" ]; then
+    JWT_SECRET=$(generate_random_string)
+    log "Generated random JWT Secret" $YELLOW
 fi
 
-##########################################################################
-# EMAIL SIGN UPS
-##########################################################################
-read -p "$(echo -e "5. Do you wish to enable Email Signups? ${RED}[You will require a custom SMTP Server]${NC} [y/n]: ")" enable_email_signup
-if [[ $enable_email_signup == "Y" || $enable_email_signup == "y" ]]
-then
-    enable_email_signup=true
+domain=$(prompt_user "4. Enter the domain you will use to access Supabase Studio" "true" "false")
 
-    ##########################################################################
-    # EMAIL AUTO CONFIRMATION
-    ##########################################################################
-    read -p "$(echo -e "   Do you wish to enable Email Auto Confirmation? [Y/N]: ")" ENABLE_EMAIL_AUTOCONFIRM
-    if [[ -z "$ENABLE_EMAIL_AUTOCONFIRM" || ENABLE_EMAIL_AUTOCONFIRM == "n" || ENABLE_EMAIL_AUTOCONFIRM == "N" ]]
-    then
-        ENABLE_EMAIL_AUTOCONFIRM="false"
-    else    
+enable_email_signup=$(prompt_user "5. Do you wish to enable Email Signups? [y/n]" "true" "false" "n")
+
+if [[ $enable_email_signup == "Y" || $enable_email_signup == "y" ]]; then
+    ENABLE_EMAIL_SIGNUP=true
+    
+    ENABLE_EMAIL_AUTOCONFIRM=$(prompt_user "   Do you wish to enable Email Auto Confirmation? [y/n]" "false" "false" "n")
+    if [[ "$ENABLE_EMAIL_AUTOCONFIRM" == "y" || "$ENABLE_EMAIL_AUTOCONFIRM" == "Y" ]]; then
         ENABLE_EMAIL_AUTOCONFIRM="true"
+    else
+        ENABLE_EMAIL_AUTOCONFIRM="false"
     fi
-
-    ##########################################################################
-    # SMTP HOST
-    ##########################################################################
-    read -p "$(echo -e "   Enter your SMTP Host: ")" SMTP_HOST
-    if [ -z "$SMTP_HOST" ]
-    then
-    while [[ -z "$SMTP_HOST" ]]; do
-        read -p "$(echo -e "      ${RED}Invalid input, try again:${NC} ")" SMTP_HOST
-    done
-    fi
-
-    ##########################################################################
-    # SMTP PORT
-    ##########################################################################
-    read -p "$(echo -e "   Enter your SMTP Port: ")" SMTP_PORT
-    if [ -z "$SMTP_PORT" ]
-    then
-    while [[ -z "$SMTP_PORT" ]]; do
-        read -p "$(echo -e "      ${RED}Invalid input, try again:${NC} ")" SMTP_PORT
-    done
-    fi
-
-    ##########################################################################
-    # SMTP USERNAME
-    ##########################################################################
-    read -p "$(echo -e "   Enter your SMTP Username: ")" SMTP_USER
-    if [ -z "$SMTP_USER" ]
-    then
-    while [[ -z "$SMTP_USER" ]]; do
-        read -p "$(echo -e "      ${RED}Invalid input, try again:${NC} ")" SMTP_USER
-    done
-    fi
-
-    ##########################################################################
-    # SMTP PASSWORD
-    ##########################################################################
-    read -p "$(echo -e "   Enter your SMTP Password: ")" SMTP_PASS
-    if [ -z "$SMTP_PASS" ]
-    then
-    while [[ -z "$SMTP_PASS" ]]; do
-        read -p "$(echo -e "      ${RED}Invalid input, try again:${NC} ")" SMTP_PASS
-    done
-    fi
-
-    ##########################################################################
-    # SMTP SENDER EMAIL
-    ##########################################################################
-    read -p "$(echo -e "   Enter your SMTP Sender Name: ")" smtp_sender
-    if [ -z "$smtp_sender" ]
-    then
-    while [[ -z "$smtp_sender" ]]; do
-        read -p "$(echo -e "      ${RED}Invalid input, try again:${NC} ")" smtp_sender
-    done
-    fi
+    
+    SMTP_HOST=$(prompt_user "   Enter your SMTP Host" "true" "false")
+    SMTP_PORT=$(prompt_user "   Enter your SMTP Port" "true" "false")
+    SMTP_USER=$(prompt_user "   Enter your SMTP Username" "true" "false")
+    SMTP_PASS=$(prompt_user "   Enter your SMTP Password" "true" "true")
+    SMTP_SENDER_NAME=$(prompt_user "   Enter your SMTP Sender Name" "true" "false")
+    SMTP_ADMIN_EMAIL="$SMTP_USER"
 else
     ENABLE_EMAIL_SIGNUP=false
     ENABLE_EMAIL_AUTOCONFIRM=false
-    SMTP_ADMIN_EMAIL=some-fake-email
-    SMTP_HOST=some-fake-host
-    SMTP_PORT=1337
-    SMTP_USER=some-fake-email
-    SMTP_PASS=some-fake-password
-    SMTP_SENDER_NAME=noreply
+    SMTP_ADMIN_EMAIL="no-reply@example.com"
+    SMTP_HOST="smtp.example.com"
+    SMTP_PORT=587
+    SMTP_USER="no-reply@example.com"
+    SMTP_PASS="placeholder-password"
+    SMTP_SENDER_NAME="Supabase"
 fi
 
 ##########################################################################
-# Generate random password if blank
+# JWT Key Generation
 ##########################################################################
-if [ -z "$POSTGRES_PASSWORD" ]
-then
-    POSTGRES_PASSWORD=`cat /dev/urandom | tr -dc "a-zA-Z0-9-_" | fold -w 64 | head -n 1`
-fi
+log "Generating JWT keys..." $BLUE
 
-##########################################################################
-# Generate random JWT_SECRET if blank
-##########################################################################
-if [ -z "$JWT_SECRET" ]
-then
-    JWT_SECRET=`cat /dev/urandom | tr -dc "a-zA-Z0-9-_" | fold -w 64 | head -n 1`
-fi
-
-##########################################################################
-# Default Variables: GO TRUE
-##########################################################################
-SITE_URL="http://localhost:3000"
-ADDITIONAL_REDIRECT_URLS=
-JWT_EXPIRY=3600
-DISABLE_SIGNUP=false
-ENABLE_PHONE_SIGNUP=false
-ENABLE_PHONE_AUTOCONFIRM=false
-
-##########################################################################
-# Default Variables: Ports
-##########################################################################
-STUDIO_PORT=3000
-KONG_HTTP_PORT=8000
-KONG_HTTPS_PORT=8443
-POSTGRES_PORT=5432
-
-##########################################################################
-# Default Variables: Postgres Defaults
-##########################################################################
-POSTGRES_USER="postgres"
-POSTGRES_DB="supabase"
-
-##########################################################################
-# GENERATE ANON & SERVICE ROLE JWT KEYS
-##########################################################################
 base64_encode() {
-        declare input=${1:-$(</dev/stdin)}
-        # Use `tr` to URL encode the output from base64.
-        printf '%s' "${input}" | base64 | tr -d '=' | tr '/+' '_-' | tr -d '\n'
+    declare input=${1:-$(</dev/stdin)}
+    printf '%s' "${input}" | base64 | tr -d '=' | tr '/+' '_-' | tr -d '\n'
 }
 
 json() {
-        declare input=${1:-$(</dev/stdin)}
-        printf '%s' "${input}"
+    declare input=${1:-$(</dev/stdin)}
+    printf '%s' "${input}"
 }
 
 hmacsha256_sign() {
-        declare input=${1:-$(</dev/stdin)}
-        printf '%s' "${input}" | openssl dgst -binary -sha256 -hmac "${JWT_SECRET}"
+    declare input=${1:-$(</dev/stdin)}
+    printf '%s' "${input}" | openssl dgst -binary -sha256 -hmac "${JWT_SECRET}"
 }
 
 header='{"alg": "HS256","typ": "JWT"}'
@@ -241,159 +240,116 @@ SERVICE_ROLE_KEY="${service_role_header_payload}.${service_role_signature}"
 ##########################################################################
 # File Setup
 ##########################################################################
-if [[ $flag == '--reset' ]]
-then
-    rm -rf "${SCRIPT_DIR}/volumes" >> /dev/null
+log "Setting up configuration files..." $BLUE
+
+if [[ $flag == '--reset' ]]; then
+    log "Resetting existing volumes..." $YELLOW
+    rm -rf "${SCRIPT_DIR}/volumes" 2>/dev/null
 fi
 
-if [[ ! -d "${SCRIPT_DIR}/volumes/db" && ! -d "${SCRIPT_DIR}/volumes/api" ]]
-then
-    mkdir -p "${SCRIPT_DIR}/volumes/db/init" >> /dev/null
-    curl -s "https://raw.githubusercontent.com/christopher-talke/docker-cli-supabase/main/volumes/db/init/00-initial-schema.sql" > "${SCRIPT_DIR}/volumes/db/init/00-initial-schema.sql"
-    curl -s "https://raw.githubusercontent.com/christopher-talke/docker-cli-supabase/main/volumes/db/init/01-auth-schema.sql" > "${SCRIPT_DIR}/volumes/db/init/01-auth-schema.sql"
-    curl -s "https://raw.githubusercontent.com/christopher-talke/docker-cli-supabase/main/volumes/db/init/02-storage-schema.sql" > "${SCRIPT_DIR}/volumes/db/init/02-storage-schema.sql"
-    curl -s "https://raw.githubusercontent.com/christopher-talke/docker-cli-supabase/main/volumes/db/init/03-post-setup.sql" > "${SCRIPT_DIR}/volumes/db/init/03-post-setup.sql"
-
-    mkdir -p "${SCRIPT_DIR}/volumes/api" >> /dev/null
-    curl -s "https://raw.githubusercontent.com/christopher-talke/docker-cli-supabase/main/volumes/api/kong.yml" > "${SCRIPT_DIR}/volumes/api/kong.yml"
+if [[ ! -d "${SCRIPT_DIR}/volumes/db" && ! -d "${SCRIPT_DIR}/volumes/api" ]]; then
+    log "Creating directory structure..." $BLUE
+    mkdir -p "${SCRIPT_DIR}/volumes/db/init" 2>/dev/null
+    mkdir -p "${SCRIPT_DIR}/volumes/api" 2>/dev/null
+    mkdir -p "${SCRIPT_DIR}/volumes/storage" 2>/dev/null
+    
+    log "Downloading configuration files..." $BLUE
+    curl -s "${ORIGIN_REPO}/docker-cli-supabase/main/volumes/db/init/00-initial-schema.sql" > "${SCRIPT_DIR}/volumes/db/init/00-initial-schema.sql"
+    curl -s "${ORIGIN_REPO}/docker-cli-supabase/main/volumes/db/init/01-auth-schema.sql" > "${SCRIPT_DIR}/volumes/db/init/01-auth-schema.sql"
+    curl -s "${ORIGIN_REPO}/docker-cli-supabase/main/volumes/db/init/02-storage-schema.sql" > "${SCRIPT_DIR}/volumes/db/init/02-storage-schema.sql"
+    curl -s "${ORIGIN_REPO}/docker-cli-supabase/main/volumes/db/init/03-post-setup.sql" > "${SCRIPT_DIR}/volumes/db/init/03-post-setup.sql"
+    curl -s "${ORIGIN_REPO}/docker-cli-supabase/main/volumes/api/kong.yml" > "${SCRIPT_DIR}/volumes/api/kong.yml"
 fi
 
-sed -i "s/anon-role-replace/${ANON_KEY}/" "${SCRIPT_DIR}/volumes/api/kong.yml" >> /dev/null
-sed -i "s/service-role-replace/${SERVICE_ROLE_KEY}/" "${SCRIPT_DIR}/volumes/api/kong.yml" >> /dev/null
+# Update Kong configuration with JWT keys
+sed -i "s/anon-role-replace/${ANON_KEY}/" "${SCRIPT_DIR}/volumes/api/kong.yml" 2>/dev/null
+sed -i "s/service-role-replace/${SERVICE_ROLE_KEY}/" "${SCRIPT_DIR}/volumes/api/kong.yml" 2>/dev/null
 
-####################################################################################################################################################
-# Start Of Docker Processing
-####################################################################################################################################################
+##########################################################################
+# Docker Containers Setup
+##########################################################################
+log "Setting up Docker containers..." $BLUE
 
-echo ""
-if [[ $flag == '--reset' ]]
-then
-    echo ">>> Starting cleanup process"
-    echo ">>>>>> Removing docker containers from supabase-network..."
-    docker network disconnect $NETWORK_NAME supabase-meta &> /dev/null
-    docker network disconnect $NETWORK_NAME supabase-storage &> /dev/null
-    docker network disconnect $NETWORK_NAME supabase-rest &> /dev/null
-    docker network disconnect $NETWORK_NAME supabase-auth &> /dev/null
-    docker network disconnect $NETWORK_NAME supabase-studio &> /dev/null
-    docker network disconnect $NETWORK_NAME supabase-db &> /dev/null
+# Reset if requested
+if [[ $flag == '--reset' ]]; then
+    log "Cleaning up existing containers..." $YELLOW
+    
+    # Stop and remove containers
+    docker rm -f supabase-meta supabase-storage supabase-rest supabase-auth \
+               supabase-studio supabase-realtime supabase-db supabase-kong 2>/dev/null
+    
+    # Remove network
+    docker network rm $NETWORK_NAME 2>/dev/null
+    
+    log "Cleanup complete" $GREEN
+fi
 
-    echo ">>>>>> Removing supabase-network..."
-    docker network rm $NETWORK_NAME &> /dev/null
+# Create network
+log "Creating Docker network: $NETWORK_NAME..." $BLUE
+docker network inspect $NETWORK_NAME &>/dev/null || docker network create $NETWORK_NAME &>/dev/null
 
-    echo ">>>>>> Cleaning up existing docker containers..."
-    docker rm -f supabase-meta &> /dev/null &&
-    docker rm -f supabase-storage &> /dev/null &&
-    docker rm -f supabase-rest &> /dev/null &&
-    docker rm -f supabase-auth &> /dev/null &&
-    docker rm -f supabase-studio &> /dev/null &&
-    docker rm -f supabase-realtime &> /dev/null &&
-    docker rm -f supabase-db &> /dev/null
-
-    echo ">>>>>> All cleaned up..."
-fi 
-
-# Docker Network
-NETWORK_NAME="supabase-network"
-
-echo ""
-echo ">>> Creating Network '$NETWORK_NAME'..."
-    docker network rm $NETWORK_NAME &> /dev/null
-    docker network create $NETWORK_NAME &> /dev/null
-echo ">>>>>> Network Created!"
-echo ""
-
-# Database Service
-DB_CONTAINER_NAME="supabase-db"
-
-echo ">>> Creating Postgres Database '$DB_CONTAINER_NAME'..."
-docker stop $DB_CONTAINER_NAME &> /dev/null
-docker kill $DB_CONTAINER_NAME &> /dev/null
-docker rm $DB_CONTAINER_NAME &> /dev/null
-
+# Setup PostgreSQL
+log "Setting up PostgreSQL database..." $BLUE
 docker run -d \
-    --name=$DB_CONTAINER_NAME \
+    --name=supabase-db \
     -e POSTGRES_PASSWORD=$POSTGRES_PASSWORD \
-    -e POSTGRES_USER=$POSTGRES_USER \
-    -e POSTGRES_DB=$POSTGRES_DB \
+    -e POSTGRES_USER=postgres \
+    -e POSTGRES_DB=supabase \
     -v ${SCRIPT_DIR}/volumes/db/data:/var/lib/postgresql/data \
     -v ${SCRIPT_DIR}/volumes/db/init:/docker-entrypoint-initdb.d \
-    -p 5432:5432 \
+    -p $DEFAULT_POSTGRES_PORT:5432 \
     --restart unless-stopped \
     --network $NETWORK_NAME \
-    supabase/postgres:latest &> /dev/null
+    supabase/postgres:latest &>/dev/null || error "Failed to start PostgreSQL container"
 
-echo ">>>>>> Waiting for database to finish setting itself up..."
-sleep 120
-echo ">>>>>> Excuting some commands against the database... gimme a sec..."
+log "Waiting for database initialization (this may take a few minutes)..." $YELLOW
 sleep 30
-docker exec -u root $DB_CONTAINER_NAME bash -c 'su postgres -c postgres -c config_file=/etc/postgresql/postgresql.conf' &> /dev/null
-echo ">>>>>> Finished setting up database!"
+for i in {1..9}; do
+    log "Database initialization in progress... ($i/9)" $YELLOW
+    sleep 10
+done
+log "Database initialization complete" $GREEN
 
-
-# Studio Service
-STUDIO_CONTAINER_NAME="supabase-studio"
-
-echo ""
-echo ">>> Creating Web UI for Supabase '$STUDIO_CONTAINER_NAME'..."
-docker stop $STUDIO_CONTAINER_NAME &> /dev/null
-docker kill $STUDIO_CONTAINER_NAME &> /dev/null
-docker rm $STUDIO_CONTAINER_NAME &> /dev/null
-
+# Setup Studio
+log "Setting up Supabase Studio..." $BLUE
 docker run -d \
-    --name=$STUDIO_CONTAINER_NAME \
-    -e SUPABASE_URL="https://supabase.talke.dev" \
+    --name=supabase-studio \
+    -e SUPABASE_URL="https://$domain" \
     -e STUDIO_PG_META_URL="http://supabase-meta:8080" \
     -e SUPABASE_ANON_KEY=$ANON_KEY \
     -e SUPABASE_SERVICE_KEY=$SERVICE_ROLE_KEY \
-    -p 3000:3000 \
+    -p $DEFAULT_STUDIO_PORT:3000 \
     --restart unless-stopped \
     --network $NETWORK_NAME \
-    supabase/studio:latest &> /dev/null
-echo ">>>>>> Finished setting up Web UI!"
+    supabase/studio:latest &>/dev/null || error "Failed to start Studio container"
 
-# Kong Service
-KONG_CONTAINER_NAME="supabase-kong"
-
-docker stop $KONG_CONTAINER_NAME &> /dev/null
-docker kill $KONG_CONTAINER_NAME &> /dev/null
-docker rm $KONG_CONTAINER_NAME &> /dev/null
-
-echo ""
-echo ">>> Creating API Gateway '$KONG_CONTAINER_NAME'..."
+# Setup Kong API Gateway
+log "Setting up Kong API Gateway..." $BLUE
 docker run -d \
-    --name=$KONG_CONTAINER_NAME \
+    --name=supabase-kong \
     -e KONG_DATABASE="off" \
     -e KONG_DECLARATIVE_CONFIG="/var/lib/kong/kong.yml" \
     -e KONG_DNS_ORDER="LAST,A,CNAME" \
     -e KONG_PLUGINS="request-transformer,cors,key-auth,acl" \
     -v ${SCRIPT_DIR}/volumes/api/kong.yml:/var/lib/kong/kong.yml \
-    -p 8000:8000 \
-    -p 8443:8443 \
+    -p $DEFAULT_KONG_HTTP_PORT:8000 \
+    -p $DEFAULT_KONG_HTTPS_PORT:8443 \
     --restart unless-stopped \
     --network $NETWORK_NAME \
-    kong:latest &> /dev/null
-echo ">>>>>> Finished setting up API Gateway!"
+    kong:latest &>/dev/null || error "Failed to start Kong container"
 
-# Auth Service
-AUTH_CONTAINER_NAME="supabase-auth"
-
-docker stop $AUTH_CONTAINER_NAME &> /dev/null
-docker kill $AUTH_CONTAINER_NAME &> /dev/null
-docker rm $AUTH_CONTAINER_NAME &> /dev/null
-
-echo ""
-echo ">>> Creating Authentication Service '$AUTH_CONTAINER_NAME'..."
+# Setup Auth Service
+log "Setting up Authentication Service..." $BLUE
 docker run -d \
-    --name=$AUTH_CONTAINER_NAME \
+    --name=supabase-auth \
     -e GOTRUE_API_HOST=0.0.0.0 \
     -e GOTRUE_API_PORT=9999 \
     -e GOTRUE_DB_DRIVER="postgres" \
-    -e GOTRUE_DB_DATABASE_URL="postgres://$POSTGRES_USER:$POSTGRES_PASSWORD@supabase-db:5432/$POSTGRES_DB?search_path=auth" \
-    -e GOTRUE_SITE_URL=$SITE_URL \
-    -e GOTRUE_URI_ALLOW_LIST=$ADDITIONAL_REDIRECT_URLS \
-    -e GOTRUE_DISABLE_SIGNUP=$DISABLE_SIGNUP \
+    -e GOTRUE_DB_DATABASE_URL="postgres://postgres:$POSTGRES_PASSWORD@supabase-db:5432/supabase?search_path=auth" \
+    -e GOTRUE_SITE_URL="https://$domain" \
+    -e GOTRUE_DISABLE_SIGNUP=false \
     -e GOTRUE_JWT_SECRET=$JWT_SECRET \
-    -e GOTRUE_JWT_EXP=$JWT_EXPIRY \
+    -e GOTRUE_JWT_EXP=3600 \
     -e GOTRUE_JWT_DEFAULT_GROUP_NAME="authenticated" \
     -e GOTRUE_EXTERNAL_EMAIL_ENABLED=$ENABLE_EMAIL_SIGNUP \
     -e GOTRUE_MAILER_AUTOCONFIRM=$ENABLE_EMAIL_AUTOCONFIRM \
@@ -407,50 +363,33 @@ docker run -d \
     -e GOTRUE_MAILER_URLPATHS_CONFIRMATION="/auth/v1/verify" \
     -e GOTRUE_MAILER_URLPATHS_RECOVERY="/auth/v1/verify" \
     -e GOTRUE_MAILER_URLPATHS_EMAIL_CHANGE="/auth/v1/verify" \
-    -e GOTRUE_EXTERNAL_PHONE_ENABLED=$ENABLE_PHONE_SIGNUP \
-    -e GOTRUE_SMS_AUTOCONFIRM=$ENABLE_PHONE_AUTOCONFIRM \
+    -e GOTRUE_EXTERNAL_PHONE_ENABLED=false \
+    -e GOTRUE_SMS_AUTOCONFIRM=false \
     --restart unless-stopped \
     --network $NETWORK_NAME \
-    supabase/gotrue:latest &> /dev/null
-echo ">>>>>> Finished setting up Authentication Service!"
+    supabase/gotrue:latest &>/dev/null || error "Failed to start Auth container"
 
-
-# Auth Service
-REST_CONTAINER_NAME="supabase-rest"
-
-docker stop $REST_CONTAINER_NAME &> /dev/null
-docker kill $REST_CONTAINER_NAME &> /dev/null
-docker rm $REST_CONTAINER_NAME &> /dev/null
-
-echo ""
-echo ">>> Creating REST API '$REST_CONTAINER_NAME'..."
+# Setup REST API
+log "Setting up REST API..." $BLUE
 docker run -d \
-    --name=$REST_CONTAINER_NAME \
-    -e PGRST_DB_URI="postgres://$POSTGRES_USER:$POSTGRES_PASSWORD@supabase-db:5432/$POSTGRES_DB" \
+    --name=supabase-rest \
+    -e PGRST_DB_URI="postgres://postgres:$POSTGRES_PASSWORD@supabase-db:5432/supabase" \
     -e PGRST_DB_SCHEMA="public,storage" \
     -e PGRST_DB_ANON_ROLE="anon" \
     -e PGRST_JWT_SECRET=$JWT_SECRET \
     -e PGRST_DB_USE_LEGACY_GUCS="false" \
     --restart unless-stopped \
     --network $NETWORK_NAME \
-    postgrest/postgrest:latest &> /dev/null
-echo ">>>>>> Finished setting up REST API!"
+    postgrest/postgrest:latest &>/dev/null || error "Failed to start REST container"
 
-# Realtime Service
-REALTIME_CONTAINER_NAME="supabase-realtime"
-
-docker stop $REALTIME_CONTAINER_NAME &> /dev/null
-docker kill $REALTIME_CONTAINER_NAME &> /dev/null
-docker rm $REALTIME_CONTAINER_NAME &> /dev/null
-
-echo ""
-echo ">>> Creating Realtime Service '$REALTIME_CONTAINER_NAME'..."
+# Setup Realtime
+log "Setting up Realtime Service..." $BLUE
 docker run -d \
-    --name=$REALTIME_CONTAINER_NAME \
+    --name=supabase-realtime \
     -e DB_HOST="supabase-db" \
     -e DB_PORT=5432 \
-    -e DB_NAME=$POSTGRES_DB \
-    -e DB_USER=$POSTGRES_USER \
+    -e DB_NAME=supabase \
+    -e DB_USER=postgres \
     -e DB_PASSWORD=$POSTGRES_PASSWORD \
     -e DB_SSL="false" \
     -e PORT=4000 \
@@ -462,29 +401,21 @@ docker run -d \
     -e TEMPORARY_SLOT="true" \
     --restart unless-stopped \
     --network $NETWORK_NAME \
-    supabase/realtime:latest &> /dev/null
-echo ">>>>>> Finished setting up Realtime Service!"
-echo ">>>>>> Excuting some commands against the database... gimme a sec..."
-sleep 30
-docker exec $REALTIME_CONTAINER_NAME bash -c './prod/rel/realtime/bin/realtime eval Realtime.Release.migrate && ./prod/rel/realtime/bin/realtime start' &> /dev/null
-echo ">>>>>> Finished setting up database!"
+    supabase/realtime:latest &>/dev/null || error "Failed to start Realtime container"
 
-# Storage Service
-STORAGE_CONTAINER_NAME="supabase-storage"
+log "Initializing Realtime service..." $YELLOW
+sleep 10
+docker exec supabase-realtime bash -c './prod/rel/realtime/bin/realtime eval Realtime.Release.migrate && ./prod/rel/realtime/bin/realtime start' &>/dev/null
 
-docker stop $STORAGE_CONTAINER_NAME &> /dev/null
-docker kill $STORAGE_CONTAINER_NAME &> /dev/null
-docker rm $STORAGE_CONTAINER_NAME &> /dev/null
-
-echo ""
-echo ">>> Creating Storage Service '$STORAGE_CONTAINER_NAME'..."
+# Setup Storage
+log "Setting up Storage Service..." $BLUE
 docker run -d \
-    --name=$STORAGE_CONTAINER_NAME \
+    --name=supabase-storage \
     -e ANON_KEY=$ANON_KEY \
     -e SERVICE_KEY=$SERVICE_ROLE_KEY \
     -e POSTGREST_URL="http://supabase-rest:3000" \
     -e PGRST_JWT_SECRET=$JWT_SECRET \
-    -e DATABASE_URL="postgres://$POSTGRES_USER:$POSTGRES_PASSWORD@supabase-db:5432/$POSTGRES_DB" \
+    -e DATABASE_URL="postgres://postgres:$POSTGRES_PASSWORD@supabase-db:5432/supabase" \
     -e PGOPTIONS="-c search_path=storage,public" \
     -e FILE_SIZE_LIMIT=52428800 \
     -e STORAGE_BACKEND="file" \
@@ -495,57 +426,234 @@ docker run -d \
     --restart unless-stopped \
     --network $NETWORK_NAME \
     -v ${SCRIPT_DIR}/volumes/storage:/var/lib/storage \
-    supabase/storage-api:latest &> /dev/null
-echo ">>>>>> Finished setting up Storage Service!"
+    supabase/storage-api:latest &>/dev/null || error "Failed to start Storage container"
 
-# Meta Service
-META_CONTAINER_NAME="supabase-meta"
-
-docker stop $META_CONTAINER_NAME &> /dev/null
-docker kill $META_CONTAINER_NAME &> /dev/null
-docker rm $META_CONTAINER_NAME &> /dev/null
-
-echo ""
-echo ">>> Creating Meta Service '$META_CONTAINER_NAME'..."
+# Setup Meta
+log "Setting up Meta Service..." $BLUE
 docker run -d \
-    --name=$META_CONTAINER_NAME \
+    --name=supabase-meta \
     -e PG_META_PORT=8080 \
     -e PG_META_DB_HOST="supabase-db" \
     -e PG_META_DB_PASSWORD=$POSTGRES_PASSWORD \
     --restart unless-stopped \
     --network $NETWORK_NAME \
-    -v ${SCRIPT_DIR}/volumes/storage:/var/lib/storage \
-    supabase/postgres-meta:latest &> /dev/null
-echo ">>>>>> Finished setting up Meta Service!"
-
-####################################################################################################################################################
-# End Of Docker Processing
-####################################################################################################################################################
+    supabase/postgres-meta:latest &>/dev/null || error "Failed to start Meta container"
 
 ##########################################################################
-# Final output
+# Generate Docker Compose File
 ##########################################################################
+log "Generating docker-compose.yml for future reference..." $BLUE
 
-echo -e "";
-echo -e "---------------------------------------------------------------------------";
-echo -e "${GREEN}All set you are ready to go! See below for your Supabase details:${NC}";
-echo -e "";
-echo -e "Postgres Password:         ${POSTGRES_PASSWORD}";
-echo -e "JWT Secret:                ${JWT_SECRET}";
-echo -e "Supabase URL:              https://${domain}";
-echo -e "Postgres URL:              postgres://${domain}:5432";
-echo -e "";
-echo -e "${RED}[Please keep this information somewhere safe]${NC}";
-echo -e "---------------------------------------------------------------------------";
+cat > "${SCRIPT_DIR}/${COMPOSE_FILE}" << EOF
+version: '3'
+services:
+  db:
+    image: supabase/postgres:latest
+    container_name: supabase-db
+    restart: unless-stopped
+    environment:
+      POSTGRES_PASSWORD: $POSTGRES_PASSWORD
+      POSTGRES_USER: postgres
+      POSTGRES_DB: supabase
+    volumes:
+      - ./volumes/db/data:/var/lib/postgresql/data
+      - ./volumes/db/init:/docker-entrypoint-initdb.d
+    ports:
+      - "$DEFAULT_POSTGRES_PORT:5432"
+    networks:
+      - supabase
+
+  studio:
+    image: supabase/studio:latest
+    container_name: supabase-studio
+    restart: unless-stopped
+    environment:
+      SUPABASE_URL: "https://$domain"
+      STUDIO_PG_META_URL: "http://meta:8080"
+      SUPABASE_ANON_KEY: $ANON_KEY
+      SUPABASE_SERVICE_KEY: $SERVICE_ROLE_KEY
+    ports:
+      - "$DEFAULT_STUDIO_PORT:3000"
+    networks:
+      - supabase
+    depends_on:
+      - db
+      - meta
+
+  kong:
+    image: kong:latest
+    container_name: supabase-kong
+    restart: unless-stopped
+    environment:
+      KONG_DATABASE: "off"
+      KONG_DECLARATIVE_CONFIG: "/var/lib/kong/kong.yml"
+      KONG_DNS_ORDER: "LAST,A,CNAME"
+      KONG_PLUGINS: "request-transformer,cors,key-auth,acl"
+    volumes:
+      - ./volumes/api/kong.yml:/var/lib/kong/kong.yml
+    ports:
+      - "$DEFAULT_KONG_HTTP_PORT:8000"
+      - "$DEFAULT_KONG_HTTPS_PORT:8443"
+    networks:
+      - supabase
+
+  auth:
+    image: supabase/gotrue:latest
+    container_name: supabase-auth
+    restart: unless-stopped
+    environment:
+      GOTRUE_API_HOST: 0.0.0.0
+      GOTRUE_API_PORT: 9999
+      GOTRUE_DB_DRIVER: postgres
+      GOTRUE_DB_DATABASE_URL: "postgres://postgres:$POSTGRES_PASSWORD@db:5432/supabase?search_path=auth"
+      GOTRUE_SITE_URL: "https://$domain"
+      GOTRUE_DISABLE_SIGNUP: "false"
+      GOTRUE_JWT_SECRET: $JWT_SECRET
+      GOTRUE_JWT_EXP: 3600
+      GOTRUE_JWT_DEFAULT_GROUP_NAME: "authenticated"
+      GOTRUE_EXTERNAL_EMAIL_ENABLED: $ENABLE_EMAIL_SIGNUP
+      GOTRUE_MAILER_AUTOCONFIRM: $ENABLE_EMAIL_AUTOCONFIRM
+      GOTRUE_SMTP_ADMIN_EMAIL: $SMTP_ADMIN_EMAIL
+      GOTRUE_SMTP_HOST: $SMTP_HOST
+      GOTRUE_SMTP_PORT: $SMTP_PORT
+      GOTRUE_SMTP_USER: $SMTP_USER
+      GOTRUE_SMTP_PASS: $SMTP_PASS
+      GOTRUE_SMTP_SENDER_NAME: $SMTP_SENDER_NAME
+      GOTRUE_MAILER_URLPATHS_INVITE: "/auth/v1/verify"
+      GOTRUE_MAILER_URLPATHS_CONFIRMATION: "/auth/v1/verify"
+      GOTRUE_MAILER_URLPATHS_RECOVERY: "/auth/v1/verify"
+      GOTRUE_MAILER_URLPATHS_EMAIL_CHANGE: "/auth/v1/verify"
+      GOTRUE_EXTERNAL_PHONE_ENABLED: "false"
+      GOTRUE_SMS_AUTOCONFIRM: "false"
+    networks:
+      - supabase
+    depends_on:
+      - db
+
+  rest:
+    image: postgrest/postgrest:latest
+    container_name: supabase-rest
+    restart: unless-stopped
+    environment:
+      PGRST_DB_URI: "postgres://postgres:$POSTGRES_PASSWORD@db:5432/supabase"
+      PGRST_DB_SCHEMA: "public,storage"
+      PGRST_DB_ANON_ROLE: "anon"
+      PGRST_JWT_SECRET: $JWT_SECRET
+      PGRST_DB_USE_LEGACY_GUCS: "false"
+    networks:
+      - supabase
+    depends_on:
+      - db
+
+  realtime:
+    image: supabase/realtime:latest
+    container_name: supabase-realtime
+    restart: unless-stopped
+    environment:
+      DB_HOST: db
+      DB_PORT: 5432
+      DB_NAME: supabase
+      DB_USER: postgres
+      DB_PASSWORD: $POSTGRES_PASSWORD
+      DB_SSL: "false"
+      PORT: 4000
+      JWT_SECRET: $JWT_SECRET
+      REPLICATION_MODE: "RLS"
+      REPLICATION_POLL_INTERVAL: 100
+      SECURE_CHANNELS: "true"
+      SLOT_NAME: "supabase_realtime_rls"
+      TEMPORARY_SLOT: "true"
+    networks:
+      - supabase
+    depends_on:
+      - db
+
+  storage:
+    image: supabase/storage-api:latest
+    container_name: supabase-storage
+    restart: unless-stopped
+    environment:
+      ANON_KEY: $ANON_KEY
+      SERVICE_KEY: $SERVICE_ROLE_KEY
+      POSTGREST_URL: "http://rest:3000"
+      PGRST_JWT_SECRET: $JWT_SECRET
+      DATABASE_URL: "postgres://postgres:$POSTGRES_PASSWORD@db:5432/supabase"
+      PGOPTIONS: "-c search_path=storage,public"
+      FILE_SIZE_LIMIT: 52428800
+      STORAGE_BACKEND: "file"
+      FILE_STORAGE_BACKEND_PATH: "/var/lib/storage"
+      TENANT_ID: "stub"
+      REGION: "stub"
+      GLOBAL_S3_BUCKET: "stub"
+    volumes:
+      - ./volumes/storage:/var/lib/storage
+    networks:
+      - supabase
+    depends_on:
+      - db
+      - rest
+
+  meta:
+    image: supabase/postgres-meta:latest
+    container_name: supabase-meta
+    restart: unless-stopped
+    environment:
+      PG_META_PORT: 8080
+      PG_META_DB_HOST: db
+      PG_META_DB_PASSWORD: $POSTGRES_PASSWORD
+    networks:
+      - supabase
+    depends_on:
+      - db
+
+networks:
+  supabase:
+    name: $NETWORK_NAME
+EOF
 
 ##########################################################################
-# Error Output for Docker Check
+# Final Output
 ##########################################################################
+log "Setup complete! Here are your Supabase details:" $GREEN
+echo ""
+echo -e "---------------------------------------------------------------------------"
+echo -e "${GREEN}SUCCESS: Your Supabase instance is now ready!${NC}"
+echo -e "---------------------------------------------------------------------------"
+echo -e "Supabase Studio URL:       https://$domain:$DEFAULT_STUDIO_PORT"
+echo -e "REST API URL:              http://$domain:$DEFAULT_KONG_HTTP_PORT"
+echo -e "PostgreSQL Connection:     postgresql://postgres:${POSTGRES_PASSWORD}@$domain:$DEFAULT_POSTGRES_PORT/supabase"
+echo -e ""
+echo -e "${BLUE}Important Credentials${NC}"
+echo -e "---------------------------------------------------------------------------"
+echo -e "Postgres Password:         ${POSTGRES_PASSWORD}"
+echo -e "JWT Secret:                ${JWT_SECRET}"
+echo -e "Anon Key:                  ${ANON_KEY}"
+echo -e "Service Role Key:          ${SERVICE_ROLE_KEY}"
+echo -e ""
+echo -e "${YELLOW}A summary of this installation has been saved to:${NC}"
+echo -e "$SCRIPT_DIR/supabase_credentials.txt"
+echo -e "$SCRIPT_DIR/${COMPOSE_FILE}"
+echo -e "---------------------------------------------------------------------------"
 
-else
-    echo -e "";
-    echo -e "---------------------------------------------------------------------------";
-    echo -e "${RED}[Error]${NC}";
-    echo -e "Install Docker:        https://docs.docker.com/engine/install/";
-    echo -e "---------------------------------------------------------------------------";
-fi
+# Save credentials to a file
+cat > "${SCRIPT_DIR}/supabase_credentials.txt" << EOF
+# Supabase Credentials - KEEP SECURE!
+# Generated on: $(date)
+
+INSTALLATION_DIRECTORY: $SCRIPT_DIR
+POSTGRES_PASSWORD: $POSTGRES_PASSWORD
+JWT_SECRET: $JWT_SECRET
+ANON_KEY: $ANON_KEY
+SERVICE_ROLE_KEY: $SERVICE_ROLE_KEY
+
+SUPABASE_URL: https://$domain
+POSTGRES_CONNECTION: postgresql://postgres:${POSTGRES_PASSWORD}@$domain:$DEFAULT_POSTGRES_PORT/supabase
+
+# To stop all services: docker stop \$(docker ps -q --filter network=$NETWORK_NAME)
+# To start all services: docker start \$(docker ps -a -q --filter network=$NETWORK_NAME)
+# To reset and start over: bash supabase.sh --reset
+EOF
+
+chmod 600 "${SCRIPT_DIR}/supabase_credentials.txt"
+
+log "Setup completed
