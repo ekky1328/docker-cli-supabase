@@ -8,8 +8,10 @@ I just made this for fun, and to get a better understanding of Bash scripting.
 
 ## Security Notes
 
-⚠️ Do not use this in production unless you know what you are doing.
-- ⚠️ All credentials are saved to `supabase_credentials.txt` with restricted permissions (chmod 600)
+> [!CAUTION]
+> Do not use this in production unless you know what you are doing.
+
+- All credentials are saved to `supabase_credentials.txt` with restricted permissions (chmod 600)
 - This is not for production use, consider additional security measures if you are planning to do this.
 - Keep your JWT secrets and API keys secure, refer to tools like 1Password for Developers or other Secret Handlers.
 
@@ -29,7 +31,7 @@ This script automates the deployment of a complete Supabase stack using Docker c
 
 - docker ce
 - curl
-- bash shell
+- bash
 
 ## Quick Start
 
